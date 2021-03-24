@@ -1,3 +1,5 @@
+import numpy as np
+
 def init():
 
     global omega
@@ -14,3 +16,6 @@ def init():
 
     global j_zz
     j_zz = 0.
+
+    global rot_init
+    rot_init = np.pi/2
