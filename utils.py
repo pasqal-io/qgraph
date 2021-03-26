@@ -148,7 +148,7 @@ def jensen_shannon(hist1, hist2):
 
 
 # @ray.remote
-def return_fourier_from_dataset(graph_list):
+def return_fourier_from_dataset(graph_list, rot_init=settings.rot_init):
     """
     Returns the fourier transform of evolution for a list of graphs for
     the hamiltonian ising and xy.
@@ -173,11 +173,11 @@ def return_fourier_from_dataset(graph_list):
 
     for i, graph in enumerate(graph_list):
         fs_xy[0][i], fs_xy[1][i] = generate_signal_fourier(graph,
-                                                    rot_init=settings.rot_init,
+                                                    rot_init=rot_init,
                                                     N_sample=1000,
                                                     hamiltonian='xy')
         fs_is[0][i], fs_is[1][i] = generate_signal_fourier(graph,
-                                                    rot_init=settings.rot_init,
+                                                    rot_init=rot_init,
                                                     N_sample=1000,
                                                     hamiltonian='ising')
 
