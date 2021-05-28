@@ -182,3 +182,169 @@ def return_fourier_from_dataset(graph_list, rot_init=settings.rot_init):
                                                     hamiltonian='ising')
 
     return fs_xy, fs_is
+
+def return_evolution(G, times, pulses, evol='xy'):
+    """
+    Returns the final state after the following evolution:
+    - start with empty sate with as many qubits as vertices of G
+    - uniform superposition of all states
+    - alternating evolution of H_evol during times, and H_m during pulses
+
+    Arguments:
+    ---------
+    - G: graph networkx.Graph objects
+    - times: list of times to evolve following H_evol, list or np.ndarray
+    - pulses: list of times to evolve following H_m, list or np.ndarray
+                same length as times
+    - evol: type of evolution for H_evol 'ising' or 'xy'
+
+    Returns:
+    --------
+    - state: qutip.Qobj final state of evolution
+
+    """
+    assert evol in ['xy', 'ising']
+    assert len(times) == len(pulses)
+
+    N_nodes = G.number_of_nodes()
+    H_evol = generate_Ham_from_graph(G, type_h=evol)
+    H_m = generate_mixing_Ham(N_nodes)
+
+    state = generate_empty_initial_state(N_nodes)
+
+    opts = Options()
+    opts.store_states = True
+
+    result = sesolve(H_m, state, [0, np.pi/4], options=opts)
+    state = result.states[-1]
+
+    for i, theta in enumerate(pulses):
+        if np.abs(theta) > 0:
+            result = sesolve(H_m, state, [0, theta], options=opts)
+            state = result.states[-1]
+        if np.abs(times[i]) > 0:
+            if evol == 'xy':
+                result = sesolve(H_evol, state, [0, times[i]], options=opts)
+                state = result.states[-1]
+            else:
+                hexp = (- times[i] * 1j * H_evol).expm()
+                state = hexp * state
+
+    return state
+
+def return_list_of_states(graphs_list,
+    times, pulses, evol='xy', verbose=0):
+    """
+    Returns the list of states after evolution for each graph following
+    return_evolution functions.
+
+    Arguments:
+    ---------
+    - graphs_list: iterator of graph networkx.Graph objects
+    - times: list of times to evolve following H_evol, list or np.ndarray
+    - pulses: list of times to evolve following H_m, list or np.ndarray
+                same length as times
+    - evol: type of evolution for H_evol 'ising' or 'xy'
+    - verbose: int, display the progression every verbose steps
+
+    Returns:
+    --------
+    - all_states: list of qutip.Qobj final states of evolution,
+                same lenght as graphs_list
+
+    """
+    all_states = []
+    for i, G in enumerate(graphs_list):
+        all_states.append(return_evolution(G, times, pulses, evol))
+        if verbose > 0:
+            if i % verbose == 0:
+                print(i)
+    return all_states
+
+
+def return_energy_distribution(graphs_list, all_states, observable_func=None):
+    """
+    Returns all the discrete probability distributions of a diagonal
+    observable on a list of states each one associated with a graph. The
+    observable can be different for each state. The distribution is taken of
+    all possible values of all observables.
+
+    Arguments:
+    ---------
+    - graphs_list: iterator of graph networkx.Graph objects
+    - all_states: list of qutip.Qobj states associated with graphs_list
+    - observable_func: function(networkx.Graph):
+                        return qtip.Qobj diagonal observable
+
+    Returns:
+    --------
+    - all_e_masses: numpy.ndarray of shape (len(graphs_list), N_dim)
+            all discrete probability distributions
+
+    """
+
+    all_e_distrib = []
+    all_e_values_unique = []
+
+    for i, G in enumerate(graphs_list):
+        if observable_func == None: 
+            observable = generate_Ham_from_graph(
+                G, type_h='ising', type_ising='z'
+                )
+        else:
+            observable = observable_func(G, i)
+        e_values = observable.data.diagonal().real
+        e_values_unique = np.unique(e_values)
+        state = all_states[i]
+
+        e_distrib = np.zeros(len(e_values_unique))
+
+        for j, v in enumerate(e_values_unique):
+            e_distrib[j] = np.sum(
+                (np.abs(state.data.toarray()) ** 2)[e_values == v]
+                )
+
+        all_e_distrib.append(e_distrib)
+        all_e_values_unique.append(e_values_unique)
+
+    e_values_unique = np.unique(np.concatenate(all_e_values_unique, axis=0))
+
+    all_e_masses = []
+    for e_distrib, e_values in zip(all_e_distrib, all_e_values_unique):
+        masses = np.zeros_like(e_values_unique)
+        for d, e in zip(e_distrib, e_values):
+            masses[e_values_unique == e] = d
+        all_e_masses.append(masses)
+
+    all_e_masses = np.array(all_e_masses)
+
+    return all_e_masses
+
+
+def return_js_matrix(distributions):
+    """
+    Returns the Jensen-Shannon distance matrix of discrete
+    distributions.
+
+    Arguments:
+    ---------
+    - distributions: numpy.ndarray of shape (N_sample, N_dim)
+        matrix of probability distribution represented on
+        each row. Each row must sum to 1.
+
+    Returns:
+    --------
+    - js_matrix: numpy.ndarray Jensen-Shannon distance matrix
+            of shape (N_sample, N_sample)
+
+    """
+    js_matrix = np.zeros((len(distributions), len(distributions)))
+    for i in range(len(distributions)):
+        for j in range(len(distributions)):
+            masses1 = distributions[i]
+            masses2 = distributions[j]
+            js = entropy((masses1+masses2)/2) -\
+                entropy(masses1)/2 - entropy(masses2)/2
+            js_matrix[i, j] = js
+            js_matrix[j, i] = js
+    return js_matrix
