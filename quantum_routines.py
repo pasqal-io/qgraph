@@ -161,7 +161,7 @@ def generate_Ham_from_graph(graph, type_h='xy', process_node=None,
         if type_h == 'ising':
             H += edge_weight * sz_list[edge[0]] * sz_list[edge[1]]
         elif type_h == 'xy':
-            H += (edge_weight * sp_list[edge[0]] * sm_list[edge[1]]
+            H += edge_weight * (sp_list[edge[0]] * sm_list[edge[1]]
                   + sm_list[edge[0]] * sp_list[edge[1]])
     return H
 
