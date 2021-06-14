@@ -6,6 +6,8 @@ import settings
 import numpy as np
 import math
 import numba
+from tqdm.auto import tqdm, trange
+from operator import itemgetter
 
 settings.init()
 
@@ -254,15 +256,12 @@ def return_list_of_states(graphs_list,
 
     """
     all_states = []
-    for i, G in enumerate(graphs_list):
+    for G in tqdm(graphs_list, disable=verbose==0):
         all_states.append(return_evolution(G, times, pulses, evol))
-        if verbose > 0:
-            if i % verbose == 0:
-                print(i)
     return all_states
 
 
-def return_energy_distribution(graphs_list, all_states, observable_func=None):
+def return_energy_distribution(graphs_list, all_states, observable_func=None, return_energies=False, verbose=0):
     """
     Returns all the discrete probability distributions of a diagonal
     observable on a list of states each one associated with a graph. The
@@ -275,24 +274,27 @@ def return_energy_distribution(graphs_list, all_states, observable_func=None):
     - all_states: list of qutip.Qobj states associated with graphs_list
     - observable_func: function(networkx.Graph):
                         return qtip.Qobj diagonal observable
+    - return_energies: boolean
 
     Returns:
     --------
     - all_e_masses: numpy.ndarray of shape (len(graphs_list), N_dim)
             all discrete probability distributions
+    - e_values_unique: numpy.ndarray of shape (N_dim, )
+            if return_energies, all energies
 
     """
 
     all_e_distrib = []
     all_e_values_unique = []
 
-    for i, G in enumerate(graphs_list):
+    for i, G in enumerate(tqdm(graphs_list, disable=verbose==0)):
         if observable_func == None: 
             observable = generate_Ham_from_graph(
                 G, type_h='ising', type_ising='z'
                 )
         else:
-            observable = observable_func(G, i)
+            observable = observable_func(G)
         e_values = observable.data.diagonal().real
         e_values_unique = np.unique(e_values)
         state = all_states[i]
@@ -318,10 +320,62 @@ def return_energy_distribution(graphs_list, all_states, observable_func=None):
 
     all_e_masses = np.array(all_e_masses)
 
+    if return_energies:
+        return all_e_masses, e_values_unique
     return all_e_masses
 
 
-def return_js_matrix(distributions):
+def extend_energies(target_energies, energies, masses):
+    """
+    Extends masses array with columns of zeros for missing energies.
+
+    Arguments:
+    ---------
+    - target_energies: numpy.ndarray of shape (N_dim, ) target energies
+    - energies: numpy.ndarray of shape (N_dim_init, ) energies of distributions
+    - masses: numpy.ndarray of shape (N, N_dim_init) discrete probability distributions
+
+    Returns:
+    --------
+    - numpy.ndarray of shape (N, N_dim)
+            all extended discrete probability distributions
+
+    """
+    energies = list(energies)
+    N = masses.shape[0]
+    res = np.zeros((N, len(target_energies)))
+    for i, energy in enumerate(target_energies):
+        if energy not in energies:
+            res[:, i] = np.zeros((N, ))
+        else:
+            res[:, i] = masses[:, energies.index(energy)]
+    return res
+
+
+def merge_energies(e1, m1, e2, m2):
+    """
+    Merge the arrays of energy masses, filling with zeros the missing energies in each.
+    N_dim is the size of the union of the energies from the two distributions.
+
+    Arguments:
+    ---------
+    - e1: numpy.ndarray of shape (N_dim1, ) energies of first distributions
+    - m1: numpy.ndarray of shape (N1, N_dim1) first discrete probability distributions
+    - e2: numpy.ndarray of shape (N_dim2, ) energies of first distributions
+    - m2: numpy.ndarray of shape (N2, N_dim2) first discrete probability distributions
+
+    Returns:
+    --------
+    - numpy.ndarray of shape (N1, N_dim)
+            all extended first discrete probability distributions
+    - numpy.ndarray of shape (N2, N_dim)
+            all extended second discrete probability distributions
+
+    """
+    e = sorted(list(set(e1) | set(e2)))
+    return extend_energies(e, e1, m1), extend_energies(e, e2, m2)
+
+def return_js_square_matrix(distributions, verbose=0):
     """
     Returns the Jensen-Shannon distance matrix of discrete
     distributions.
@@ -340,7 +394,7 @@ def return_js_matrix(distributions):
     """
     js_matrix = np.zeros((len(distributions), len(distributions)))
     for i in range(len(distributions)):
-        for j in range(len(distributions)):
+        for j in range(i + 1):
             masses1 = distributions[i]
             masses2 = distributions[j]
             js = entropy((masses1+masses2)/2) -\
@@ -348,3 +402,86 @@ def return_js_matrix(distributions):
             js_matrix[i, j] = js
             js_matrix[j, i] = js
     return js_matrix
+ 
+def return_js_matrix(distributions1, distributions2, verbose=0):
+    """
+    Returns the Jensen-Shannon distance matrix between discrete
+    distributions.
+
+    Arguments:
+    ---------
+    - distributions1: numpy.ndarray of shape (N_samples_1, N_dim)
+        matrix of probability distribution represented on
+        each row. Each row must sum to 1.
+    - distributions2: numpy.ndarray of shape (N_samples_2, N_dim)
+        matrix of probability distribution represented on
+        each row. Each row must sum to 1.
+
+    Returns:
+    --------
+    - js_matrix: numpy.ndarray Jensen-Shannon distance matrix
+            of shape (N_sample, N_sample)
+
+    """
+    assert distributions1.shape[1] == distributions2.shape[1], \
+        "Distributions must have matching dimensions. Consider using merge_energies"
+    js_matrix = np.zeros((len(distributions1), len(distributions2)))
+    for i in trange(len(distributions1), desc='dist1 loop', disable=verbose<=0):
+        for j in trange(len(distributions2), desc='dist2 loop', disable=verbose<=1):
+            masses1 = distributions1[i]
+            masses2 = distributions2[j]
+            js = entropy((masses1+masses2)/2) -\
+                entropy(masses1)/2 - entropy(masses2)/2
+            js_matrix[i, j] = js
+    return js_matrix
+
+class Memoizer:
+    """ 
+    Will store results of the provided observable on graphs to avoid recomputing.
+    Storage is based on a key computed using get_key
+
+    Attributes:
+    -----------
+    - observable: function(networkx.Graph):
+                    return qtip.Qobj diagonal observable
+    - get_key: function(networkx.Graph):
+                    return a key used to identify the graph
+    """
+    def __init__(self, observable, get_key=None):
+        self.graphs = {}
+        self.observable = observable
+        self.get_key = get_key if get_key is not None else Memoizer.edges_key
+    
+    @staticmethod
+    def edges_unique_key(graph):
+        """
+        Key insensitive to how edges of the graph are returned 
+        (order of edges and order of nodes in edges).
+        Same result for [(a, b), (c, d)] and [(d, c), (a, b)]
+        """
+        edges = list(map(sorted, graph.edges))
+        return tuple(map(tuple, sorted(edges, key=itemgetter(0,1))))
+
+    @staticmethod
+    def edges_key(graph):
+        """ Simple key based on the edges list """
+        return tuple(graph.edges())
+
+    def get_observable(self, graph):
+        """ 
+        Gets observable on graph
+        Uses memoization to speed up the process if graph has been seen before
+
+        Arguments:
+        ---------
+        - graph: networkx.Graph to get observable on
+
+        Returns:
+        --------
+        - qtip.Qobj, diagonal observable
+
+        """
+        key = self.get_key(graph)
+        if key not in self.graphs:
+            self.graphs[key] = self.observable(graph)
+        return self.graphs[key]
