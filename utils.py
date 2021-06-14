@@ -375,7 +375,7 @@ def merge_energies(e1, m1, e2, m2):
     e = sorted(list(set(e1) | set(e2)))
     return extend_energies(e, e1, m1), extend_energies(e, e2, m2)
 
-def return_js_matrix(distributions, verbose=0):
+def return_js_square_matrix(distributions, verbose=0):
     """
     Returns the Jensen-Shannon distance matrix of discrete
     distributions.
@@ -394,7 +394,7 @@ def return_js_matrix(distributions, verbose=0):
     """
     return return_js_dist_matrix(distributions, distributions, verbose=verbose)
 
-def return_js_dist_matrix(distributions1, distributions2, verbose=0):
+def return_js_matrix(distributions1, distributions2, verbose=0):
     """
     Returns the Jensen-Shannon distance matrix between discrete
     distributions.
