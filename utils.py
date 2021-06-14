@@ -352,7 +352,7 @@ def extend_energies(target_energies, energies, masses):
     return res
 
 
-def merge_energies(e1, m1, e2, m2):
+def merge_energies(m1, e1, m2, e2):
     """
     Merge the arrays of energy masses, filling with zeros the missing energies in each.
     N_dim is the size of the union of the energies from the two distributions.
