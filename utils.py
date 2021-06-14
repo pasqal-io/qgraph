@@ -392,7 +392,7 @@ def return_js_square_matrix(distributions, verbose=0):
             of shape (N_sample, N_sample)
 
     """
-    return return_js_dist_matrix(distributions, distributions, verbose=verbose)
+    return return_js_matrix(distributions, distributions, verbose=verbose)
 
 def return_js_matrix(distributions1, distributions2, verbose=0):
     """
