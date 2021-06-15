@@ -178,7 +178,7 @@ def predict(model, times, pulses, test_graphs, test_targets, energies_masses, en
     K = np.exp(-matrix)
 
     # Make model predict
-    return model.predict(K), test_targets, model.score(K, test_targets)
+    return test_targets, model.predict(K), model.score(K, test_targets)
 
 def has_only_one_class(y_true):
     return len(np.unique(y_true)) == 1
@@ -198,10 +198,11 @@ def analyse_pred(y_true, y_pred, score, metric='f1-score', verbose=True):
         print(classification_report(y_true, y_pred, target_names=['Non-planar', 'Planar']))
     scores = classification_report(y_true, y_pred, target_names=['Non-planar', 'Planar'], output_dict=True)
     if verbose: print(f"\n\t### Score: {score:.2%} ({metric} for planar: {scores['Planar'][metric]:.3f} & non-planar: {scores['Non-planar'][metric]:.3f})")
-    return scores['Non-planar'], scores['Planar']
+    return scores['Planar'], scores['Non-planar']
 
-def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed=None):
-    metric = 'precision'  # in precision, recall, f1-score
+def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed=None, metric = 'f1-score',
+                test_big=True, test_ramping_max_n=True):
+    assert metric in ['precision', 'recall', 'f1-score']
     if seed is not None: np.random.seed(seed)
 
     if verbose: print(f"\n\t{BOLD}# 1. Generate train and test datasets{STYLE_END}\n")
@@ -212,26 +213,28 @@ def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed
     if verbose: print(model)
 
     if verbose: print(f"\n\t{BOLD}# 3. Smoke-test model{STYLE_END}\n")
-    y_pred, y_true, score = predict(model, times, pulses, graphs, targets, energies_masses, energies, verbose=verbose)
+    y_true, y_pred, score = predict(model, times, pulses, graphs, targets, energies_masses, energies, verbose=verbose)
     analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
     
-    if verbose: print(f"\n\t{BOLD}# 4. Investigate generalisation capabilities{STYLE_END}\n")
-    n, N = 20, 10
-    if verbose: print(f"\n\t#   a. {N} graphs of {n} nodes\n")
-    test_graphs, test_targets = generate_graphs([n], [N], generator=generator)
-    analyse_pred(*predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose), metric=metric, verbose=verbose)
+    if test_big:
+        if verbose: print(f"\n\t{BOLD}# 4. Investigate generalisation capabilities{STYLE_END}\n")
+        n, N = 20, 10
+        if verbose: print(f"\n\t#   a. {N} graphs of {n} nodes\n")
+        test_graphs, test_targets = generate_graphs([n], [N], generator=generator)
+        analyse_pred(*predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose), metric=metric, verbose=verbose)
 
-    N = 1000
-    if verbose: print(f"\n\t#   b. Ramping up number of nodes\n")
-    scores = []
-    ns = range(3, 19)
-    for n in ns:
-        if verbose: print(f"\n\t### {n} NODES ###")
-        test_graphs, test_targets = generate_graphs([n], [N], generator='binomial')
-        y_pred, y_true, score = predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose)
-        score_p, score_np = analyse_pred(y_pred, y_true, score, metric=metric, verbose=verbose)
-        scores.append((score, score_p[metric], score_np[metric]))
-    
+    if test_ramping_max_n is not None:
+        N = 1000
+        if verbose: print(f"\n\t#   b. Ramping up number of nodes\n")
+        scores = []
+        ns = range(3, test_ramping_max_n)
+        for n in ns:
+            if verbose: print(f"\n\t### {n} NODES ###")
+            test_graphs, test_targets = generate_graphs([n], [N], generator='binomial')
+            y_true, y_pred, score = predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose)
+            score_p, score_np = analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
+            scores.append((score, score_p[metric], score_np[metric]))
+        
     # Plot scores
     pd.DataFrame(scores, columns=['Global accuracy', f'Planar {metric}', f'Non-planar {metric}'], index=ns).plot()
     plt.ylabel('Scores')
@@ -325,7 +328,7 @@ def predict_dgl(model, graphs, targets, verbose=False):
     if verbose: print('Accuracy of argmax predictions on the test set: {:4f}%'.format(
         argmax_score * 100
     ))
-    return argmax_Y, test_Y, argmax_score
+    return test_Y, argmax_Y, argmax_score
 
 def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None):
     metric = 'precision'  # in precision, recall, f1-score
@@ -339,7 +342,7 @@ def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None):
     if verbose: print(model)  # ToDo: print summary
 
     if verbose: print(f"\n\t{BOLD}# 3. Smoke-test model{STYLE_END}\n")
-    y_pred, y_true, score = predict_dgl(model, graphs, targets, verbose=verbose)
+    y_true, y_pred, score = predict_dgl(model, graphs, targets, verbose=verbose)
     analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
     
     if verbose: print(f"\n\t{BOLD}# 4. Investigate generalisation capabilities{STYLE_END}\n")
@@ -355,8 +358,8 @@ def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None):
     for n in ns:
         if verbose: print(f"\n\t### {n} NODES ###")
         test_graphs, test_targets = generate_graphs_dgl([n], [N], generator='binomial')
-        y_pred, y_true, score = predict_dgl(model, test_graphs, test_targets, verbose=verbose)
-        score_p, score_np = analyse_pred(y_pred, y_true, score, metric=metric, verbose=verbose)
+        y_true, y_pred, score = predict_dgl(model, test_graphs, test_targets, verbose=verbose)
+        score_p, score_np = analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
         scores.append((score, score_p[metric], score_np[metric]))
     
     # Plot scores
