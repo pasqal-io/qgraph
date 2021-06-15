@@ -233,7 +233,7 @@ def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed
         scores.append((score, score_p[metric], score_np[metric]))
     
     # Plot scores
-    pd.DataFrame(scores, columns=['Global accuracy', f'Planar {metric}', f'Non-planar {metric}']).plot()
+    pd.DataFrame(scores, columns=['Global accuracy', f'Planar {metric}', f'Non-planar {metric}'], index=ns).plot()
     plt.ylabel('Scores')
     plt.xlabel('Number of nodes')
     plt.legend()
@@ -351,7 +351,7 @@ def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None):
     N = 1000
     if verbose: print(f"\n\t#   b. Ramping up number of nodes\n")
     scores = []
-    ns = range(3, 16)
+    ns = range(3, 101)
     for n in ns:
         if verbose: print(f"\n\t### {n} NODES ###")
         test_graphs, test_targets = generate_graphs_dgl([n], [N], generator='binomial')
@@ -360,7 +360,7 @@ def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None):
         scores.append((score, score_p[metric], score_np[metric]))
     
     # Plot scores
-    pd.DataFrame(scores, columns=['Global accuracy', f'Planar {metric}', f'Non-planar {metric}']).plot()
+    pd.DataFrame(scores, columns=['Global accuracy', f'Planar {metric}', f'Non-planar {metric}'], index=ns).plot()
     plt.ylabel('Scores')
     plt.xlabel('Number of nodes')
     plt.legend()
