@@ -357,7 +357,7 @@ def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None):
     ns = range(3, 101)
     for n in ns:
         if verbose: print(f"\n\t### {n} NODES ###")
-        test_graphs, test_targets = generate_graphs_dgl([n], [N], generator='binomial')
+        test_graphs, test_targets = generate_graphs_dgl([n], [N], generator='binomial', verbose=verbose)
         y_true, y_pred, score = predict_dgl(model, test_graphs, test_targets, verbose=verbose)
         score_p, score_np = analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
         scores.append((score, score_p[metric], score_np[metric]))
