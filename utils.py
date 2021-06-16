@@ -392,7 +392,16 @@ def return_js_matrix(distributions, verbose=0):
             of shape (N_sample, N_sample)
 
     """
-    return return_js_dist_matrix(distributions, distributions, verbose=verbose)
+    js_matrix = np.zeros((len(distributions), len(distributions)))
+    for i in range(len(distributions)):
+        for j in range(len(distributions)):
+            masses1 = distributions[i]
+            masses2 = distributions[j]
+            js = entropy((masses1+masses2)/2) -\
+                entropy(masses1)/2 - entropy(masses2)/2
+            js_matrix[i, j] = js
+            js_matrix[j, i] = js
+    return js_matrix
 
 def return_js_dist_matrix(distributions1, distributions2, verbose=0):
     """
