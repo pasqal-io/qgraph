@@ -4,7 +4,7 @@ import numpy as np
 import planarity
 import dgl
 from qutip import sigmaz, sigmap, qeye, tensor, sigmam
-from utils import return_list_of_states, return_energy_distribution, return_js_matrix, return_js_dist_matrix, merge_energies, Memoizer
+from utils import return_list_of_states, return_energy_distribution, return_js_square_matrix, return_js_dist_matrix, merge_energies, Memoizer
 from sklearn.model_selection import StratifiedKFold, RepeatedStratifiedKFold
 from sklearn import svm
 from sklearn.metrics import accuracy_score, f1_score, make_scorer, confusion_matrix, classification_report
@@ -132,7 +132,7 @@ def get_trained_model(times, pulses, graphs, targets, verbose=True):
     # 2. Compute probability distribution, their distance matrix and the kernel
     observables_memoizer = Memoizer(observable)
     energies_masses, energies = return_energy_distribution(graphs, states, observables_memoizer.get_observable, return_energies=True, verbose=verbose)
-    matrix = return_js_matrix(energies_masses)
+    matrix = return_js_square_matrix(energies_masses)
     K = np.exp(-matrix)
 
     # 3. Fit the model
@@ -201,7 +201,7 @@ def analyse_pred(y_true, y_pred, score, metric='f1-score', verbose=True):
     return scores['Planar'], scores['Non-planar']
 
 def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed=None, metric = 'f1-score',
-                test_big=True, test_ramping_max_n=True):
+                test_ns=[], test_nbs=[], test_big=True, test_ramping_max_n=10):
     assert metric in ['precision', 'recall', 'f1-score']
     if seed is not None: np.random.seed(seed)
 
@@ -216,17 +216,25 @@ def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed
     y_true, y_pred, score = predict(model, times, pulses, graphs, targets, energies_masses, energies, verbose=verbose)
     analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
     
-    if test_big:
+    if verbose: print(f"\n\t{BOLD}# 4. Investigate capabilities{STYLE_END}\n")
+    if len(test_ns) > 0 and len(test_ns) == len(test_nbs):
         if verbose: print(f"\n\t{BOLD}# 4. Investigate generalisation capabilities{STYLE_END}\n")
         n, N = 20, 10
-        if verbose: print(f"\n\t#   a. {N} graphs of {n} nodes\n")
+        if verbose: print(f"\n\t#   - Test set {test_ns} nodes in numbers {test_nbs}\n")
+        test_graphs, test_targets = generate_graphs(test_ns, test_nbs, generator=generator)
+        analyse_pred(*predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose), metric=metric, verbose=verbose)
+
+
+    if test_big:
+        n, N = 20, 10
+        if verbose: print(f"\n\t#   - Generalisation: {N} graphs of {n} nodes\n")
         test_graphs, test_targets = generate_graphs([n], [N], generator=generator)
         analyse_pred(*predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose), metric=metric, verbose=verbose)
 
+    scores = []
     if test_ramping_max_n is not None:
         N = 1000
-        if verbose: print(f"\n\t#   b. Ramping up number of nodes\n")
-        scores = []
+        if verbose: print(f"\n\t#   - Generalisation: Ramping up number of nodes\n")
         ns = range(3, test_ramping_max_n)
         for n in ns:
             if verbose: print(f"\n\t### {n} NODES ###")
@@ -235,12 +243,12 @@ def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed
             score_p, score_np = analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
             scores.append((score, score_p[metric], score_np[metric]))
         
-    # Plot scores
-    pd.DataFrame(scores, columns=['Global accuracy', f'Planar {metric}', f'Non-planar {metric}'], index=ns).plot()
-    plt.ylabel('Scores')
-    plt.xlabel('Number of nodes')
-    plt.legend()
-    plt.show()
+        # Plot scores
+        pd.DataFrame(scores, columns=['Global accuracy', f'Planar {metric}', f'Non-planar {metric}'], index=ns).plot()
+        plt.ylabel('Scores')
+        plt.xlabel('Number of nodes')
+        plt.legend()
+        plt.show()
 
     return scores
 
