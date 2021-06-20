@@ -18,6 +18,7 @@ import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
 from torchsummary import summary
+import matplotlib.pyplot as plt
 
 BOLD = "\033[1m"
 STYLE_END = "\033[0m"
@@ -201,7 +202,9 @@ def analyse_pred(y_true, y_pred, score, metric='f1-score', verbose=True):
     return scores['Planar'], scores['Non-planar']
 
 def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed=None, metric = 'f1-score',
-                test_ns=[], test_nbs=[], test_big=True, test_ramping_max_n=10):
+                test_ns=[], test_nbs=[], test_smoke=True, test_big=True, test_ramping_max_n=True, return_all=False):
+    test_y_pred, test_score, test_graphs, test_targets, big_test_graphs, big_test_targets, big_y_pred, big_score = [None] * 8
+    
     assert metric in ['precision', 'recall', 'f1-score']
     if seed is not None: np.random.seed(seed)
 
@@ -213,23 +216,29 @@ def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed
     if verbose: print(model)
 
     if verbose: print(f"\n\t{BOLD}# 3. Smoke-test model{STYLE_END}\n")
-    y_true, y_pred, score = predict(model, times, pulses, graphs, targets, energies_masses, energies, verbose=verbose)
-    analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
-    
+    if test_smoke:
+        y_true, y_pred, score = predict(model, times, pulses, graphs, targets, energies_masses, energies, verbose=verbose)
+        analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
+    else:
+        print("Skipped")
+
     if verbose: print(f"\n\t{BOLD}# 4. Investigate capabilities{STYLE_END}\n")
     if len(test_ns) > 0 and len(test_ns) == len(test_nbs):
         if verbose: print(f"\n\t{BOLD}# 4. Investigate generalisation capabilities{STYLE_END}\n")
         n, N = 20, 10
         if verbose: print(f"\n\t#   - Test set {test_ns} nodes in numbers {test_nbs}\n")
         test_graphs, test_targets = generate_graphs(test_ns, test_nbs, generator=generator)
-        analyse_pred(*predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose), metric=metric, verbose=verbose)
-
+        _, test_y_pred, test_score = predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose)
+        analyse_pred(test_targets, test_y_pred, test_score, metric=metric, verbose=verbose)
+    else:
+        print('Skipping test set')
 
     if test_big:
         n, N = 20, 10
         if verbose: print(f"\n\t#   - Generalisation: {N} graphs of {n} nodes\n")
-        test_graphs, test_targets = generate_graphs([n], [N], generator=generator)
-        analyse_pred(*predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose), metric=metric, verbose=verbose)
+        big_test_graphs, big_test_targets = generate_graphs([n], [N], generator=generator)
+        _, big_y_pred, big_score = predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose)
+        analyse_pred(big_test_targets, big_y_pred, big_score, metric=metric, verbose=verbose)
 
     scores = []
     if test_ramping_max_n is not None:
@@ -239,19 +248,138 @@ def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed
         for n in ns:
             if verbose: print(f"\n\t### {n} NODES ###")
             test_graphs, test_targets = generate_graphs([n], [N], generator='binomial')
-            y_true, y_pred, score = predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose)
-            score_p, score_np = analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
+            _, y_pred, score = predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose)
+            score_p, score_np = analyse_pred(test_targets, y_pred, score, metric=metric, verbose=verbose)
             scores.append((score, score_p[metric], score_np[metric]))
         
         # Plot scores
+        plt.figure(figsize=(12, 8))
         pd.DataFrame(scores, columns=['Global accuracy', f'Planar {metric}', f'Non-planar {metric}'], index=ns).plot()
-        plt.ylabel('Scores')
+        plt.title(f"Generalisation capabilities\nfor a model trained {train_nbs} graphs of {train_ns} nodes")
+        plt.ylabel(f'Scores (on {N} samples)')
         plt.xlabel('Number of nodes')
         plt.legend()
         plt.show()
 
+    if return_all:
+        # Graphs-Targets + Pred-score for test & big | score for ramp up
+        return scores, graphs, targets, test_graphs, test_targets, test_y_pred, test_score, big_test_graphs, big_test_targets, big_y_pred, big_score
     return scores
 
+def results_graph(all_results, train_nbs, train_ns, test_nbs, test_ns, name, generalization_x=10.5):
+    all_y_true, all_y_pred = all_results[4:6]
+    all_y_true_train = all_results[2]
+    print(len(all_y_true), len(all_y_pred), len(all_y_true_train))
+
+    scores_np, scores_p, cms, test_planars, test_non_planars = [], [], [], [], []
+    start = 0
+    for n, nb in zip(test_ns, test_nbs):
+        y_true = all_y_true[start: start + nb]
+        y_pred = all_y_pred[start: start + nb]
+        cm = confusion_matrix(y_true, y_pred)
+        if len(cm) == 1:
+            # Only one class -> which one
+            only_class = y_true[0]
+            if only_class == 0:
+                score_p = None
+                score_np = 1
+                cm = np.array([[len(y_true), 0], [0, 0]])
+            else:
+                score_p = 1
+                score_np = None
+                cm = np.array([[0, 0], [0, len(y_true)]])
+        else:
+            scores = classification_report(y_true, y_pred, target_names=['Non-planar', 'Planar'], output_dict=True)
+            score_np = scores['Non-planar']['f1-score']
+            score_p = scores['Planar']['f1-score']
+        cms.append(cm)
+        scores_np.append(score_np)
+        scores_p.append(score_p)
+        test_planars.append(y_true.count(True))
+        test_non_planars.append(y_true.count(False))
+        start += nb
+
+    train_planars, train_non_planars = [], []
+    start = 0
+    for n, nb in zip(train_ns, train_nbs):
+        y_true = all_y_true_train[start: start + nb]
+        train_planars.append(y_true.count(True))
+        train_non_planars.append(y_true.count(False))
+        start += nb
+
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, sharex=True, gridspec_kw={'height_ratios': [2, 1, 1, 1]}, figsize=(12, 11))
+    plt.xticks(test_ns[::])
+    # plt.suptitle(name, fontsize=14)
+    # Top curve
+    ax1.set_title('Classification quality and generalisation capabilities')
+    ax1.plot(test_ns, scores_np, label='Non-planar', color='#546E7A')
+    ax1.plot(test_ns, scores_p, label='Planar', color='#29B6F6')
+    ax1.axvline(generalization_x, color='grey')
+    ax1.set_ylabel('f1-score')
+    ax1.set_yticks(np.arange(0.75, 1.001, 0.025))
+    ax1.set_ylim([0.74, 1.01])
+    ax1.legend(loc='lower left')
+
+    # 2nd curve
+    ax2.set_title('Classification details')
+    counts = np.sum(np.sum(cms, axis=1), axis=1) / 100
+    true_planar = np.array(cms)[:,1, 1] / counts
+    false_planar = np.array(cms)[:,0, 1] / counts
+    true_non_planar = np.array(cms)[:,0, 0] / counts
+    false_non_planar = np.array(cms)[:,1, 0] / counts
+    bar_true_planar = ax2.bar(np.array(test_ns) + 0.2, true_planar, width=0.4, color='#7CB342', align='center', label='True planar')
+    bar_false_planar = ax2.bar(np.array(test_ns) + 0.2, false_planar, width=0.4, color='#FB8C00', align='center', label='False planar',
+            bottom=true_planar)
+    bar_true_non_planar = ax2.bar(np.array(test_ns) - 0.2, true_non_planar, width=0.4, color='#AED581', align='center', label='True non-planar')
+    bar_false_non_planar = ax2.bar(np.array(test_ns) - 0.2, false_non_planar, width=0.4, color='#FFB74D', align='center', label='False non-planar',
+           bottom=true_non_planar)
+
+    # Add counts above the false
+    for rect, rect_false in zip(bar_true_planar + bar_true_non_planar, bar_false_planar + bar_false_non_planar):
+        height = rect.get_height() + rect_false.get_height()
+        ratio_false = rect_false.get_height()
+        if ratio_false > 0:
+            # 2.0 -> 2 | Ref.: https://stackoverflow.com/questions/2440692/formatting-floats-without-trailing-zeros
+            ax2.text(rect.get_x() + rect.get_width() / 2.0, height, f'{ratio_false:.1f}'.strip('0').strip('.') + '%', ha='center', va='bottom')
+
+    ax2.axvline(generalization_x, color='grey')
+    ax2.set_ylabel('Ratio of graphs\n(in %)')
+    ax2.legend(loc='upper left')
+
+    # 3rd curve
+    ax3.set_title('Training and testing graphs details')
+    # Use all_y_true_train (train) & all_y_true (test)
+    test_planars_ratio = test_planars / np.array(test_nbs) * 100
+    train_planars_ratio = train_planars / np.array(train_nbs) * 100
+    ax3.bar(np.array(test_ns) + 0.2, test_planars_ratio, width=0.4, color='#4FC3F7', align='center', label='Test planar')
+    ax3.bar(np.array(test_ns) + 0.2, test_non_planars / np.array(test_nbs) * 100, width=0.4, color='#78909C', align='center', label='Test non-planar',
+            bottom=test_planars_ratio)
+    ax3.bar(np.array(train_ns) - 0.2, train_planars_ratio, width=0.4, color='#B3E5FC', align='center', label='Train planar')
+    ax3.bar(np.array(train_ns) - 0.2, train_non_planars / np.array(train_nbs) * 100, width=0.4, color='#B0BEC5', align='center', label='Train non-planar',
+           bottom=train_planars_ratio)
+
+    ax3.axvline(generalization_x, color='grey')
+    ax3.set_ylabel('Ratio of graphs\n(in %)')
+    ax3.legend(loc='upper left')
+
+    # 4th curve
+    ax4.set_title('Training and testing graphs numbers')
+    # Use all_y_true_train (train) & all_y_true (test)
+    ax4.bar(np.array(test_ns) + 0.2, test_planars, width=0.4, color='#4FC3F7', align='center', label='Test planar')
+    ax4.bar(np.array(test_ns) + 0.2, test_non_planars, width=0.4, color='#78909C', align='center', label='Test non-planar',
+            bottom=test_planars)
+    ax4.bar(np.array(train_ns) - 0.2, train_planars, width=0.4, color='#B3E5FC', align='center', label='Train planar')
+    ax4.bar(np.array(train_ns) - 0.2, train_non_planars, width=0.4, color='#B0BEC5', align='center', label='Train non-planar',
+           bottom=train_planars)
+
+    ax4.axvline(generalization_x, color='grey')
+    ax4.set_ylabel('Number of graphs')
+    ax4.legend(loc='upper left')
+    
+    plt.xlabel('Number of nodes')
+
+    fig.savefig(f"results/{name}.pdf", bbox_inches='tight')
+    plt.show()
 
 ### DGL
 def generate_graphs_dgl(nb_nodes: list, N_samples: list, generator='uniform_edges', verbose=False):
@@ -338,7 +466,7 @@ def predict_dgl(model, graphs, targets, verbose=False):
     ))
     return test_Y, argmax_Y, argmax_score
 
-def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None):
+def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None, return_all=False):
     metric = 'precision'  # in precision, recall, f1-score
     if seed is not None: np.random.seed(seed)
 
@@ -377,4 +505,8 @@ def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None):
     plt.legend()
     plt.show()
 
+    if return_all:
+        return scores, graphs, targets, test_graphs, test_targets 
+        # ToDo: update to return more and like test_suite -> to draw analysis too
+        # , test_y_pred, test_score, big_test_graphs, big_test_targets, big_y_pred, big_score
     return scores

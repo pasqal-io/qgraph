@@ -375,26 +375,23 @@ def merge_energies(m1, e1, m2, e2):
     e = sorted(list(set(e1) | set(e2)))
     return extend_energies(e, e1, m1), extend_energies(e, e2, m2)
 
-def return_js_matrix(distributions, verbose=0):
+def return_js_square_matrix(distributions, verbose=0):
     """
     Returns the Jensen-Shannon distance matrix of discrete
     distributions.
-
     Arguments:
     ---------
     - distributions: numpy.ndarray of shape (N_sample, N_dim)
         matrix of probability distribution represented on
         each row. Each row must sum to 1.
-
     Returns:
     --------
     - js_matrix: numpy.ndarray Jensen-Shannon distance matrix
             of shape (N_sample, N_sample)
-
     """
     js_matrix = np.zeros((len(distributions), len(distributions)))
     for i in range(len(distributions)):
-        for j in range(len(distributions)):
+        for j in range(i + 1):
             masses1 = distributions[i]
             masses2 = distributions[j]
             js = entropy((masses1+masses2)/2) -\
