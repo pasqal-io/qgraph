@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 from torchsummary import summary
 import matplotlib.pyplot as plt
+import string
 
 BOLD = "\033[1m"
 STYLE_END = "\033[0m"
@@ -78,11 +79,13 @@ def observable(graph):
 
     return H
 
-def generate_graphs(nb_nodes: list, N_samples: list, generator='uniform_edges', verbose=False):
+def generate_graphs(nb_nodes: list, N_samples: list, generator='uniform_edges', verbose=False, seed=None):
     """ 
     Generates N_samples_list[i] graphs with nb_nodes[i] nodes.
     Also computes the planarity test for these graphs.
     """
+    if seed is not None:
+        np.random.seed(seed)
     graphs, targets = [], []
     for n, N in tqdm(zip(nb_nodes, N_samples), disable=not verbose):
         if generator == 'uniform_edges':
@@ -91,7 +94,7 @@ def generate_graphs(nb_nodes: list, N_samples: list, generator='uniform_edges', 
             if verbose: print(f"Maximum edge number is {N_edges_max}")
 
         graphs_loop, targets_loop = [], []
-        for _ in range(N):
+        for i in range(N):
             if generator == 'uniform_edges':
                 taken_edges = np.random.choice(
                     range(len(possible_edges)),
@@ -104,8 +107,8 @@ def generate_graphs(nb_nodes: list, N_samples: list, generator='uniform_edges', 
                 )
                 graph_edges = possible_edges[taken_edges]
             elif generator == 'binomial':
-                for _ in range(10):
-                    graph_edges = list(nx.generators.random_graphs.binomial_graph(n, np.random.random(), seed=0).edges)
+                for trial in range(10):
+                    graph_edges = list(nx.generators.random_graphs.binomial_graph(n, np.random.random(), seed=seed + i + trial * N).edges)
                     if len(graph_edges) > 0: break
                 if len(graph_edges) == 0:
                     graph_edges = [0, 1]
@@ -201,15 +204,15 @@ def analyse_pred(y_true, y_pred, score, metric='f1-score', verbose=True):
     if verbose: print(f"\n\t### Score: {score:.2%} ({metric} for planar: {scores['Planar'][metric]:.3f} & non-planar: {scores['Non-planar'][metric]:.3f})")
     return scores['Planar'], scores['Non-planar']
 
-def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed=None, metric = 'f1-score',
+def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed=None, metric='f1-score',
                 test_ns=[], test_nbs=[], test_smoke=True, test_big=True, test_ramping_max_n=True, return_all=False):
     test_y_pred, test_score, test_graphs, test_targets, big_test_graphs, big_test_targets, big_y_pred, big_score = [None] * 8
     
     assert metric in ['precision', 'recall', 'f1-score']
     if seed is not None: np.random.seed(seed)
 
-    if verbose: print(f"\n\t{BOLD}# 1. Generate train and test datasets{STYLE_END}\n")
-    graphs, targets = generate_graphs(train_ns, train_nbs, generator=generator, verbose=verbose)
+    if verbose: print(f"\n\t{BOLD}# 1. Generate train dataset{STYLE_END}\n")
+    graphs, targets = generate_graphs(train_ns, train_nbs, generator=generator, verbose=verbose, seed=seed)
     
     if verbose: print(f"\n\t{BOLD}# 2. Train model{STYLE_END}\n")
     model, energies_masses, energies = get_trained_model(times, pulses, graphs, targets, verbose=verbose)
@@ -224,10 +227,8 @@ def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed
 
     if verbose: print(f"\n\t{BOLD}# 4. Investigate capabilities{STYLE_END}\n")
     if len(test_ns) > 0 and len(test_ns) == len(test_nbs):
-        if verbose: print(f"\n\t{BOLD}# 4. Investigate generalisation capabilities{STYLE_END}\n")
-        n, N = 20, 10
         if verbose: print(f"\n\t#   - Test set {test_ns} nodes in numbers {test_nbs}\n")
-        test_graphs, test_targets = generate_graphs(test_ns, test_nbs, generator=generator)
+        test_graphs, test_targets = generate_graphs(test_ns, test_nbs, generator=generator, seed=seed + 1)
         _, test_y_pred, test_score = predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose)
         analyse_pred(test_targets, test_y_pred, test_score, metric=metric, verbose=verbose)
     else:
@@ -236,7 +237,7 @@ def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed
     if test_big:
         n, N = 20, 10
         if verbose: print(f"\n\t#   - Generalisation: {N} graphs of {n} nodes\n")
-        big_test_graphs, big_test_targets = generate_graphs([n], [N], generator=generator)
+        big_test_graphs, big_test_targets = generate_graphs([n], [N], generator=generator, seed=seed + n)
         _, big_y_pred, big_score = predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose)
         analyse_pred(big_test_targets, big_y_pred, big_score, metric=metric, verbose=verbose)
 
@@ -247,10 +248,10 @@ def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed
         ns = range(3, test_ramping_max_n)
         for n in ns:
             if verbose: print(f"\n\t### {n} NODES ###")
-            test_graphs, test_targets = generate_graphs([n], [N], generator='binomial')
-            _, y_pred, score = predict(model, times, pulses, test_graphs, test_targets, energies_masses, energies, verbose=verbose)
-            score_p, score_np = analyse_pred(test_targets, y_pred, score, metric=metric, verbose=verbose)
-            scores.append((score, score_p[metric], score_np[metric]))
+            ramp_test_graphs, ramp_test_targets = generate_graphs([n], [N], generator='binomial', seed=seed + n * N)
+            _, ramp_y_pred, ramp_score = predict(model, times, pulses, ramp_test_graphs, ramp_test_targets, energies_masses, energies, verbose=verbose)
+            score_p, score_np = analyse_pred(ramp_test_targets, ramp_y_pred, ramp_score, metric=metric, verbose=verbose)
+            scores.append((ramp_score, score_p[metric], score_np[metric]))
         
         # Plot scores
         plt.figure(figsize=(12, 8))
@@ -266,7 +267,12 @@ def test_suite(times, pulses, train_ns, train_nbs, generator, verbose=True, seed
         return scores, graphs, targets, test_graphs, test_targets, test_y_pred, test_score, big_test_graphs, big_test_targets, big_y_pred, big_score
     return scores
 
-def results_graph(all_results, train_nbs, train_ns, test_nbs, test_ns, name, generalization_x=10.5):
+def nice_number(ratio):
+    if ratio > 3:
+        return round(ratio)
+    return f'{ratio:.1f}'.replace('.0', '')
+
+def results_graph(all_results, train_nbs, train_ns, test_nbs, test_ns, name, generalization_x=10.5, dgl=False, figsize=(12, 11), loc='left'):
     all_y_true, all_y_pred = all_results[4:6]
     all_y_true_train = all_results[2]
     print(len(all_y_true), len(all_y_pred), len(all_y_true_train))
@@ -307,7 +313,8 @@ def results_graph(all_results, train_nbs, train_ns, test_nbs, test_ns, name, gen
         train_non_planars.append(y_true.count(False))
         start += nb
 
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, sharex=True, gridspec_kw={'height_ratios': [2, 1, 1, 1]}, figsize=(12, 11))
+    fig, axes = plt.subplots(4, 1, sharex=True, gridspec_kw={'height_ratios': [2, 1, 1, 1]}, figsize=figsize)
+    (ax1, ax2, ax3, ax4) = axes
     plt.xticks(test_ns[::])
     # plt.suptitle(name, fontsize=14)
     # Top curve
@@ -318,7 +325,7 @@ def results_graph(all_results, train_nbs, train_ns, test_nbs, test_ns, name, gen
     ax1.set_ylabel('f1-score')
     ax1.set_yticks(np.arange(0.75, 1.001, 0.025))
     ax1.set_ylim([0.74, 1.01])
-    ax1.legend(loc='lower left')
+    ax1.legend(loc=f'lower {loc}')
 
     # 2nd curve
     ax2.set_title('Classification details')
@@ -340,11 +347,11 @@ def results_graph(all_results, train_nbs, train_ns, test_nbs, test_ns, name, gen
         ratio_false = rect_false.get_height()
         if ratio_false > 0:
             # 2.0 -> 2 | Ref.: https://stackoverflow.com/questions/2440692/formatting-floats-without-trailing-zeros
-            ax2.text(rect.get_x() + rect.get_width() / 2.0, height, f'{ratio_false:.1f}'.strip('0').strip('.') + '%', ha='center', va='bottom')
+            ax2.text(rect.get_x() + rect.get_width() / 2.0, height, f'{nice_number(ratio_false)}%', ha='center', va='bottom')
 
     ax2.axvline(generalization_x, color='grey')
     ax2.set_ylabel('Ratio of graphs\n(in %)')
-    ax2.legend(loc='upper left')
+    ax2.legend(loc=f'upper {loc}')
 
     # 3rd curve
     ax3.set_title('Training and testing graphs details')
@@ -360,7 +367,7 @@ def results_graph(all_results, train_nbs, train_ns, test_nbs, test_ns, name, gen
 
     ax3.axvline(generalization_x, color='grey')
     ax3.set_ylabel('Ratio of graphs\n(in %)')
-    ax3.legend(loc='upper left')
+    ax3.legend(loc=f'upper {loc}')
 
     # 4th curve
     ax4.set_title('Training and testing graphs numbers')
@@ -374,16 +381,20 @@ def results_graph(all_results, train_nbs, train_ns, test_nbs, test_ns, name, gen
 
     ax4.axvline(generalization_x, color='grey')
     ax4.set_ylabel('Number of graphs')
-    ax4.legend(loc='upper left')
+    ax4.legend(loc=f'upper {loc}')
     
+
+    offsets = [(0, 0.1), (0, 0), (0, 0), (-0.005, 0)]
+    for n, (ax, (offset_x, offset_y)) in enumerate(zip(axes, offsets)):
+        ax.text(.97 + offset_x, .8 + offset_y, string.ascii_uppercase[n], transform=ax.transAxes, size=20, weight='bold')
     plt.xlabel('Number of nodes')
 
-    fig.savefig(f"results/{name}.pdf", bbox_inches='tight')
+    fig.savefig(f"results/{name}{'-dgl' if dgl else ''}.pdf", bbox_inches='tight')
     plt.show()
 
 ### DGL
-def generate_graphs_dgl(nb_nodes: list, N_samples: list, generator='uniform_edges', verbose=False):
-    graphs, targets = generate_graphs(nb_nodes, N_samples, generator=generator, verbose=verbose)
+def generate_graphs_dgl(nb_nodes: list, N_samples: list, generator='uniform_edges', verbose=False, seed=None):
+    graphs, targets = generate_graphs(nb_nodes, N_samples, generator=generator, verbose=verbose, seed=seed)
     graphs = list(map(dgl.from_networkx, graphs))
     targets = list(map(int, targets))
     return graphs, targets
@@ -414,14 +425,16 @@ def collate(samples):
     batched_graph = dgl.batch(graphs)
     return batched_graph, torch.tensor(labels)
 
-def get_trained_model_dgl(graphs, targets, batch_size=32, epochs=100, verbose=False):
+def get_trained_model_dgl(graphs, targets, batch_size=32, epochs=20, verbose=False, seed=None):
     trainset = list(zip(graphs, targets))
     # Use PyTorch's DataLoader and the collate function defined before.
     data_loader = DataLoader(trainset, batch_size=batch_size, shuffle=True, collate_fn=collate)
 
     # Create model
+    dgl.random.seed(seed)
+    torch.manual_seed(seed)
     num_classes = 2
-    model = Classifier(1, 256, num_classes)
+    model = Classifier(1, 512, num_classes)
     loss_func = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     
@@ -466,47 +479,65 @@ def predict_dgl(model, graphs, targets, verbose=False):
     ))
     return test_Y, argmax_Y, argmax_score
 
-def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None, return_all=False):
+def test_suite_dgl(train_ns, train_nbs, generator, verbose=True, seed=None, metric='f1-score',
+                    test_ns=[], test_nbs=[], test_smoke=True, test_big=True, test_ramping_max_n=True, return_all=False):
+    test_y_pred, test_score, test_graphs, test_targets, big_test_graphs, big_test_targets, big_y_pred, big_score = [None] * 8
+
     metric = 'precision'  # in precision, recall, f1-score
     if seed is not None: np.random.seed(seed)
 
     if verbose: print(f"\n\t{BOLD}# 1. Generate train and test datasets{STYLE_END}\n")
-    graphs, targets = generate_graphs_dgl(train_ns, train_nbs, generator=generator, verbose=verbose)
+    graphs, targets = generate_graphs_dgl(train_ns, train_nbs, generator=generator, verbose=verbose, seed=seed)
 
     if verbose: print(f"\n\t{BOLD}# 2. Train model{STYLE_END}\n")
-    model = get_trained_model_dgl(graphs, targets, batch_size=32, epochs=100, verbose=verbose)
-    if verbose: print(model)  # ToDo: print summary
+    model = get_trained_model_dgl(graphs, targets, batch_size=8, epochs=50, verbose=verbose, seed=seed)
+    if verbose: print(model)  # ToDo: print summary  
 
     if verbose: print(f"\n\t{BOLD}# 3. Smoke-test model{STYLE_END}\n")
-    y_true, y_pred, score = predict_dgl(model, graphs, targets, verbose=verbose)
-    analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
-    
-    if verbose: print(f"\n\t{BOLD}# 4. Investigate generalisation capabilities{STYLE_END}\n")
-    n, N = 18, 10
-    if verbose: print(f"\n\t#   a. {N} graphs of {n} nodes\n")
-    test_graphs, test_targets = generate_graphs_dgl([n], [N], generator=generator)
-    analyse_pred(*predict_dgl(model, test_graphs, test_targets, verbose=verbose), metric=metric, verbose=verbose)
+    if test_smoke:    
+        y_true, y_pred, score = predict_dgl(model, graphs, targets, verbose=verbose)
+        analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
+    else:
+        print("Skipped")
 
-    N = 1000
-    if verbose: print(f"\n\t#   b. Ramping up number of nodes\n")
+    if verbose: print(f"\n\t{BOLD}# 4. Investigate capabilities{STYLE_END}\n")
+    if len(test_ns) > 0 and len(test_ns) == len(test_nbs):
+        if verbose: print(f"\n\t#   - Test set {test_ns} nodes in numbers {test_nbs}\n")
+        test_graphs, test_targets = generate_graphs_dgl(test_ns, test_nbs, generator=generator, seed=seed + 1)
+        _, test_y_pred, test_score = predict_dgl(model, test_graphs, test_targets, verbose=verbose)
+        analyse_pred(test_targets, test_y_pred, test_score, metric=metric, verbose=verbose)
+    else:
+        print('Skipping test set')
+
+    if test_big:
+        n, N = 20, 10
+        if verbose: print(f"\n\t#   - Generalisation: {N} graphs of {n} nodes\n")
+        big_test_graphs, big_test_targets = generate_graphs_dgl([n], [N], generator=generator, seed=seed + n)
+        _, big_y_pred, big_score = predict_dgl(model, big_test_graphs, big_test_targets, verbose=verbose)
+        analyse_pred(big_test_targets, big_y_pred, big_score, metric=metric, verbose=verbose)
+
     scores = []
-    ns = range(3, 101)
-    for n in ns:
-        if verbose: print(f"\n\t### {n} NODES ###")
-        test_graphs, test_targets = generate_graphs_dgl([n], [N], generator='binomial', verbose=verbose)
-        y_true, y_pred, score = predict_dgl(model, test_graphs, test_targets, verbose=verbose)
-        score_p, score_np = analyse_pred(y_true, y_pred, score, metric=metric, verbose=verbose)
-        scores.append((score, score_p[metric], score_np[metric]))
-    
-    # Plot scores
-    pd.DataFrame(scores, columns=['Global accuracy', f'Planar {metric}', f'Non-planar {metric}'], index=ns).plot()
-    plt.ylabel('Scores')
-    plt.xlabel('Number of nodes')
-    plt.legend()
-    plt.show()
+    if test_ramping_max_n is not None:
+        N = 1000
+        if verbose: print(f"\n\t#   - Generalisation: Ramping up number of nodes\n")
+        ns = range(3, test_ramping_max_n)
+        for n in ns:
+            if verbose: print(f"\n\t### {n} NODES ###")
+            ramp_test_graphs, ramp_test_targets = generate_graphs_dgl([n], [N], generator='binomial', verbose=verbose, seed=seed + n * N)
+            _, ramp_y_pred, ramp_score = predict_dgl(model, ramp_test_graphs, ramp_test_targets, verbose=verbose)
+            score_p, score_np = analyse_pred(ramp_test_targets, ramp_y_pred, score, metric=metric, verbose=verbose)
+            scores.append((ramp_score, score_p[metric], score_np[metric]))
+        
+        # Plot scores
+        plt.figure(figsize=(12, 8))
+        pd.DataFrame(scores, columns=['Global accuracy', f'Planar {metric}', f'Non-planar {metric}'], index=ns).plot()
+        plt.title(f"Generalisation capabilities\nfor a model trained {train_nbs} graphs of {train_ns} nodes")
+        plt.ylabel(f'Scores (on {N} samples)')
+        plt.xlabel('Number of nodes')
+        plt.legend()
+        plt.show()
 
     if return_all:
-        return scores, graphs, targets, test_graphs, test_targets 
-        # ToDo: update to return more and like test_suite -> to draw analysis too
-        # , test_y_pred, test_score, big_test_graphs, big_test_targets, big_y_pred, big_score
+        # Graphs-Targets + Pred-score for test & big | score for ramp up
+        return scores, graphs, targets, test_graphs, test_targets, test_y_pred, test_score, big_test_graphs, big_test_targets, big_y_pred, big_score
     return scores
