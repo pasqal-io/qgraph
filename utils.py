@@ -221,9 +221,6 @@ def return_evolution(G, times, pulses, evol='xy'):
     state = result.states[-1]
 
     for i, theta in enumerate(pulses):
-        if np.abs(theta) > 0:
-            result = sesolve(H_m, state, [0, theta], options=opts)
-            state = result.states[-1]
         if np.abs(times[i]) > 0:
             if evol == 'xy':
                 result = sesolve(H_evol, state, [0, times[i]], options=opts)
@@ -231,6 +228,10 @@ def return_evolution(G, times, pulses, evol='xy'):
             else:
                 hexp = (- times[i] * 1j * H_evol).expm()
                 state = hexp * state
+                
+        if np.abs(theta) > 0:
+            result = sesolve(H_m, state, [0, theta], options=opts)
+            state = result.states[-1]
 
     return state
 
